@@ -1,0 +1,34 @@
+[package]
+name = "wavelane"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+publish = false
+description = "Drag each application's sound onto any output: a sound map over the screen."
+
+[dependencies]
+gpui-kit = "=0.7.3"
+anyhow = "1"
+serde_json = "1"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# The Linux platform gpui-kit runs on; the direct dependency reaches the
+# vendored patch API (crate name gpui_linux): window raise, blur.
+gpui-pre-linux = "=0.3.9"
+# System-wide shortcut (Global Shortcuts portal).
+ashpd = { version = "=0.13.13", default-features = false, features = ["global_shortcuts", "async-io"] }
+tokio = { version = "1", features = ["rt", "net", "time"] }
+futures-util = "0.3"
+# Tray icon (StatusNotifierItem).
+ksni = { version = "=0.3.6", features = ["blocking"] }
+
+[workspace]
+
+[profile.dev]
+debug = 1
+
+# Vendored crates patched for Wavelane: see vendor/README.md.
+[patch.crates-io]
+ksni = { path = "vendor/ksni" }
+gpui-pre-linux = { path = "vendor/gpui-pre-linux" }
+gpui-component = { path = "vendor/gpui-component" }
