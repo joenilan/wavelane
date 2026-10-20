@@ -6,9 +6,11 @@ use std::sync::{
     Arc, Mutex,
 };
 
-/// The map was asked for (click or menu).
+/// "Open map" from the menu.
 pub const MAP: u8 = 1;
 pub const QUIT: u8 = 2;
+/// A click on the icon: the volume flyout.
+pub const FLYOUT: u8 = 4;
 
 struct Item {
     actions: Arc<AtomicU8>,
@@ -26,7 +28,9 @@ impl ksni::Tray for Item {
         "Wavelane".into()
     }
     fn icon_name(&self) -> String {
-        "digital.zombie.wavelane".into()
+        // The drawn symbolic icon, which suits a panel, rather than the
+        // colourful application icon.
+        String::new()
     }
     /// Drawn here too: a tray host may not find a freshly installed icon.
     fn icon_pixmap(&self) -> Vec<ksni::Icon> {
@@ -40,13 +44,13 @@ impl ksni::Tray for Item {
         }
     }
     fn activate(&mut self, _: i32, _: i32) {
-        self.actions.fetch_or(MAP, Ordering::Release);
+        self.actions.fetch_or(FLYOUT, Ordering::Release);
     }
     fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
         use ksni::menu::StandardItem;
         vec![
             StandardItem {
-                label: "Open Wavelane".into(),
+                label: "Open map".into(),
                 activate: Box::new(|item: &mut Self| {
                     item.actions.fetch_or(MAP, Ordering::Release);
                 }),
@@ -104,7 +108,7 @@ impl Tray {
 fn icon_pixmaps() -> Vec<ksni::Icon> {
     use resvg::{tiny_skia, usvg};
     let Ok(tree) = usvg::Tree::from_str(
-        include_str!("../packaging/digital.zombie.wavelane.svg"),
+        include_str!("../packaging/wavelane-tray-symbolic.svg"),
         &usvg::Options::default(),
     ) else {
         return Vec::new();

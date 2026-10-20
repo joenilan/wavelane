@@ -226,7 +226,7 @@ const DEVICE_COLORS: [u32; 5] = [0xef9f76, 0x8fd3e0, 0xe5a5c4, 0xc8d98b, 0xb4b9f
 
 /// A short device name for the map: "GA102 High Definition Audio Controller
 /// Digital Stereo (HDMI 2) [BenQ GL2760]" becomes "BenQ GL2760 · HDMI 2".
-fn friendly(description: &str) -> String {
+pub(crate) fn friendly(description: &str) -> String {
     let inner = |open: char, close: char| -> Option<&str> {
         let start = description.rfind(open)?;
         let end = description[start..].find(close)? + start;

@@ -21,6 +21,8 @@ pub(crate) struct Core {
     /// Outputs hidden from the map (shown again while editing devices).
     pub(crate) hidden_outputs: BTreeSet<String>,
     pub(crate) map_window: Option<AnyWindowHandle>,
+    /// The tray's volume flyout, while open.
+    pub(crate) flyout_window: Option<AnyWindowHandle>,
     pub(crate) map_minimal: bool,
     /// The open map should fade out and close.
     pub(crate) map_close_requested: bool,
@@ -81,6 +83,7 @@ impl AssetSource for Assets {
             "console/monitor.svg" => "M4 4h16a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2ZM8 21h8M12 17v4",
             "console/orbit.svg" => "M12 9a3 3 0 1 1 0 6 3 3 0 0 1 0-6ZM4.5 7.5a9 9 0 0 1 13-2.6M19.5 16.5a9 9 0 0 1-13 2.6M19 5a1.5 1.5 0 1 1 0 .1M5 19a1.5 1.5 0 1 1 0 .1",
             "console/close.svg" => "M6 6l12 12M18 6 6 18",
+            "console/muted.svg" => "M11 5 6 9H3v6h3l5 4ZM16 9l5 6M21 9l-5 6",
             _ => return Ok(None),
         };
         Ok(Some(Cow::Owned(
@@ -105,6 +108,7 @@ pub fn run(hidden: bool, instance: Option<crate::single_instance::Instance>) {
             worker: Worker::spawn(),
             hidden_outputs: load_hidden(),
             map_window: None,
+            flyout_window: None,
             map_minimal: false,
             map_close_requested: false,
             hotkey: crate::hotkey::Hotkey::spawn(),
@@ -116,6 +120,9 @@ pub fn run(hidden: bool, instance: Option<crate::single_instance::Instance>) {
             let core = cx.global_mut::<Core>();
             if core.map_window.is_some_and(|w| !open.contains(&w)) {
                 core.map_window = None;
+            }
+            if core.flyout_window.is_some_and(|w| !open.contains(&w)) {
+                core.flyout_window = None;
             }
         })
         .detach();
@@ -147,9 +154,9 @@ fn tick(cx: &mut App) -> bool {
         .unwrap_or_default();
     for request in requests {
         match request {
-            crate::single_instance::Request::Map(token) | crate::single_instance::Request::Show(token) => {
-                crate::map::toggle(token, cx)
-            }
+            crate::single_instance::Request::Map(token) => crate::map::toggle(token, cx),
+            // Launching it again (the application menu): the flyout.
+            crate::single_instance::Request::Show(_) => crate::flyout::toggle(cx),
             crate::single_instance::Request::Hidden => {}
         }
     }
@@ -159,6 +166,9 @@ fn tick(cx: &mut App) -> bool {
     let actions = cx.global::<Core>().tray.actions();
     if actions & crate::tray::QUIT != 0 {
         return true;
+    }
+    if actions & crate::tray::FLYOUT != 0 {
+        crate::flyout::toggle(cx);
     }
     if actions & crate::tray::MAP != 0 {
         let token = cx.global::<Core>().tray.take_activation_token();

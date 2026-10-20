@@ -2,6 +2,7 @@
 mod app;
 mod app_icons;
 mod engine;
+mod flyout;
 mod graph;
 mod hotkey;
 mod map;
@@ -27,7 +28,7 @@ fn main() {
     let map = args.iter().any(|a| a == "--map");
     // Before anything touches PipeWire: a later launch only asks the running
     // Wavelane to open (or close) the map.
-    let instance = match single_instance::claim(hidden, map || !hidden) {
+    let instance = match single_instance::claim(hidden, map) {
         Ok(single_instance::Claim::Primary(instance)) => Some(instance),
         Ok(single_instance::Claim::Running(Ok(()))) => return,
         Ok(single_instance::Claim::Running(Err(error))) => {
