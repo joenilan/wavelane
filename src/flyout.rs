@@ -50,6 +50,8 @@ pub struct Flyout {
     set: Vec<(Knob, f32, Instant)>,
     focus: FocusHandle,
     _activation: Subscription,
+    /// Redraws when the graph changes while it is open.
+    _watch: Task<()>,
 }
 
 impl Flyout {
@@ -62,6 +64,16 @@ impl Flyout {
                 window.remove_window();
             }
         });
+        let watch = cx.spawn(async move |this, cx| loop {
+            cx.background_executor().timer(Duration::from_millis(250)).await;
+            let Ok(()) = this.update(cx, |this, cx| {
+                if cx.global::<Core>().worker.view().differs(&this.view) {
+                    cx.notify();
+                }
+            }) else {
+                break;
+            };
+        });
         Self {
             view: cx.global::<Core>().worker.view(),
             viewed: Instant::now(),
@@ -72,6 +84,7 @@ impl Flyout {
             set: Vec::new(),
             focus,
             _activation: activation,
+            _watch: watch,
         }
     }
 
@@ -325,8 +338,13 @@ impl Render for Flyout {
             self.view = cx.global::<Core>().worker.view();
             self.viewed = Instant::now();
         }
+        // Apps come and go while it is open: it grows or shrinks with them.
+        let h = height(&self.view);
+        if (f32::from(window.viewport_size().height) - h).abs() > 0.5 {
+            window.resize(size(px(WIDTH), px(h)));
+        }
         let fade = (self.started.elapsed().as_secs_f32() / FADE.as_secs_f32()).min(1.);
-        // Redraw while fading in and a few times a second for the levels.
+        // Redraw while fading in or dragging a slider.
         if fade < 1. || self.dragging.is_some() {
             window.request_animation_frame();
         }

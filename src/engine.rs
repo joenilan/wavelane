@@ -57,6 +57,19 @@ pub struct View {
     pub default_output: Option<String>,
 }
 
+impl View {
+    /// Whether anything a window shows differs, live levels aside.
+    pub fn differs(&self, other: &View) -> bool {
+        fn shown(o: &crate::graph::Output) -> (&str, &str, Option<f32>, bool, u64, &str) {
+            (&o.name, &o.description, o.volume, o.mute, o.device, &o.group)
+        }
+        self.phase != other.phase
+            || self.apps != other.apps
+            || self.default_output != other.default_output
+            || !self.outputs.iter().map(shown).eq(other.outputs.iter().map(shown))
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum Command {
     /// Place one application (key) on an output, or `None` to follow the
@@ -85,22 +98,31 @@ impl Store {
         Self { path: base.map(|b| b.join("wavelane").join("placements")) }
     }
     pub fn load(&self) -> (BTreeMap<String, String>, BTreeSet<String>) {
-        self.path
-            .as_ref()
-            .and_then(|p| fs::read_to_string(p).ok())
-            .map(|t| parse_store(&t))
-            .unwrap_or_default()
+        let Some(path) = &self.path else { return Default::default() };
+        let Ok(text) = fs::read_to_string(path) else { return Default::default() };
+        if !text.starts_with("wavelane-placements=1\n") {
+            // Unreadable (newer or damaged): kept aside, not overwritten.
+            let aside = path.with_extension("unreadable");
+            eprintln!("Wavelane: placements file not understood; kept as {}", aside.display());
+            let _ = fs::rename(path, aside);
+            return Default::default();
+        }
+        parse_store(&text)
     }
     pub fn save(&self, pinned: &BTreeMap<String, String>, released: &BTreeSet<String>) -> Result<(), String> {
         let path = self.path.as_ref().ok_or("No settings directory.")?;
         let parent = path.parent().ok_or("No settings directory.")?;
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         let temp = parent.join(format!(".placements-{}", std::process::id()));
-        let mut file = fs::File::create(&temp).map_err(|e| e.to_string())?;
-        file.write_all(format_store(pinned, released).as_bytes())
-            .and_then(|_| file.sync_all())
-            .map_err(|e| e.to_string())?;
-        fs::rename(&temp, path).map_err(|e| e.to_string())
+        let written = fs::File::create(&temp).and_then(|mut file| {
+            file.write_all(format_store(pinned, released).as_bytes())?;
+            file.sync_all()
+        });
+        let result = written.and_then(|_| fs::rename(&temp, path));
+        if result.is_err() {
+            let _ = fs::remove_file(&temp);
+        }
+        result.map_err(|e| e.to_string())
     }
 }
 fn hex(s: &str) -> String {
@@ -213,13 +235,15 @@ impl Engine {
         self.handled.retain(|id| live.contains(id));
         let present: BTreeSet<String> = self.snapshot.outputs.iter().map(|o| o.name.clone()).collect();
         if present != self.present {
-            // A device came or went: placements on it are applied again.
+            // A device came back: placements on it are applied again. Only
+            // those, so routes another program made stay as they are.
+            let returned: BTreeSet<&String> = present.difference(&self.present).collect();
             let pinned = &self.pinned;
             let replace: Vec<_> = self
                 .snapshot
                 .streams
                 .iter()
-                .filter(|s| pinned.contains_key(&s.app_key()))
+                .filter(|s| pinned.get(&s.app_key()).is_some_and(|o| returned.contains(o)))
                 .map(|s| (s.node, s.serial))
                 .collect();
             for id in replace {
@@ -238,6 +262,9 @@ impl Engine {
             return;
         }
         let streams: Vec<Stream> = self.snapshot.streams.clone();
+        // Applications whose leftover target is released this time (every
+        // stream of theirs, not only the first).
+        let mut releasing = BTreeSet::new();
         for s in streams.iter().filter(|s| s.info && s.movable) {
             let id = (s.node, s.serial);
             if self.handled.contains(&id) {
@@ -248,7 +275,9 @@ impl Engine {
                 Some(output) if self.present.contains(&output) => {
                     if s.targeted_at != output {
                         if let Err(error) = self.graph.route(s, Some(&output)) {
+                            // Not handled: tried again on the next pass.
                             eprintln!("Wavelane: {error}");
+                            continue;
                         }
                     }
                     self.handled.insert(id);
@@ -257,7 +286,10 @@ impl Engine {
                 // the device returns (handled again then).
                 Some(_) => {}
                 None => {
-                    if self.released.remove(&key) && !s.targeted_at.is_empty() {
+                    if self.released.remove(&key) {
+                        releasing.insert(key.clone());
+                    }
+                    if releasing.contains(&key) && !s.targeted_at.is_empty() {
                         eprintln!("Wavelane: {key} came back on an output it no longer uses; returning it to the default");
                         let _ = self.graph.route(s, None);
                     }
@@ -300,16 +332,20 @@ impl Engine {
         if let Some(name) = &output {
             self.graph.set_default_output(name)?;
         }
+        // Every application, even when one fails; the first error is kept.
+        let mut result = Ok(());
         let keys: Vec<String> = self.pinned.keys().cloned().collect();
         for key in keys {
-            self.place(&key, None)?;
+            if let Err(error) = self.place(&key, None) {
+                result = result.and(Err(error));
+            }
         }
         // Streams pointed elsewhere by anyone follow the new default too.
         let streams: Vec<Stream> = self.snapshot.streams.iter().filter(|s| s.movable && !s.targeted_at.is_empty()).cloned().collect();
         for s in &streams {
             let _ = self.graph.route(s, None);
         }
-        Ok(())
+        result
     }
 
     fn app_level(&mut self, key: &str, volume: Option<f32>, mute: Option<bool>) -> Result<(), String> {
@@ -462,10 +498,13 @@ fn run(rx: mpsc::Receiver<Command>, latest: Arc<Mutex<View>>, levels: Arc<Mutex<
                     e.settle();
                     e.view(&mut view);
                     if e.pinned != pinned || e.released != released {
-                        pinned = e.pinned.clone();
-                        released = e.released.clone();
-                        if let Err(error) = store.save(&pinned, &released) {
-                            view.message = Some(format!("Could not save placements: {error}"));
+                        // Remembered as saved only once it is (tried again next pass).
+                        match store.save(&e.pinned, &e.released) {
+                            Ok(()) => {
+                                pinned = e.pinned.clone();
+                                released = e.released.clone();
+                            }
+                            Err(error) => view.message = Some(format!("Could not save placements: {error}")),
                         }
                     }
                 }
@@ -513,5 +552,101 @@ mod tests {
         assert_eq!(apps[0].pinned.as_deref(), Some("spk"));
         assert_eq!(apps[1].playing_on, None);
         assert_eq!(apps[1].streams, 2);
+    }
+
+    /// Live routing on this machine's PipeWire with silent test streams
+    /// ("WLTest"). Needs two outputs: WL_A and WL_B (node names; B is the
+    /// current default). "Everything" is left out: it would move every
+    /// application on the machine. Run with
+    /// `cargo test --release live_routing -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn live_routing() {
+        use std::process::{Child, Command as Run, Stdio};
+        let (a, b) = (std::env::var("WL_A").expect("WL_A"), std::env::var("WL_B").expect("WL_B"));
+        let config = std::env::temp_dir().join(format!("wavelane-live-{}", std::process::id()));
+        // SAFETY: single test thread; set before the worker starts.
+        unsafe { std::env::set_var("XDG_CONFIG_HOME", &config) };
+        let play = || -> Child {
+            Run::new("pw-cat")
+                .args(["-p", "-a", "--format", "s16", "--rate", "48000", "--channels", "2"])
+                .args(["-P", "{ application.name = \"WLTest\" }", "/dev/zero"])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("pw-cat")
+        };
+        let mut w = Worker::spawn();
+        // Waits until the test app looks as expected.
+        let until = |w: &Worker, what: &str, ok: &dyn Fn(Option<&App>, &View) -> bool| {
+            let start = Instant::now();
+            loop {
+                let view = w.view();
+                if ok(view.apps.iter().find(|x| x.key == "WLTest"), &view) {
+                    println!("ok   {what} ({} ms)", start.elapsed().as_millis());
+                    return;
+                }
+                if start.elapsed() > Duration::from_secs(6) {
+                    let app = view.apps.iter().find(|x| x.key == "WLTest").cloned();
+                    panic!("FAIL {what}: {app:?}");
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
+        };
+        let on = |o: &str| {
+            let o = o.to_owned();
+            move |x: Option<&App>, _: &View| x.is_some_and(|x| x.playing_on.as_deref() == Some(o.as_str()))
+        };
+        let gone = |x: Option<&App>, _: &View| x.is_none();
+
+        let mut p1 = play();
+        until(&w, "stream appears on the default", &on(&b));
+        w.send(Command::Place("WLTest".into(), Some(a.clone()))).unwrap();
+        until(&w, "placed on A", &on(&a));
+        thread::sleep(Duration::from_secs(3));
+        until(&w, "still on A after 3 s (no one moves it back)", &on(&a));
+        let mut p2 = play();
+        until(&w, "second stream joins it on A", &|x, v| on(&a)(x, v) && x.is_some_and(|x| x.streams == 2));
+        let _ = (p1.kill(), p2.kill(), p1.wait(), p2.wait());
+        until(&w, "streams closed", &gone);
+        let mut p3 = play();
+        until(&w, "a new stream starts on A by itself", &on(&a));
+        w.send(Command::Place("WLTest".into(), None)).unwrap();
+        until(&w, "follows the default again", &|x, v| on(&b)(x, v) && x.is_some_and(|x| x.pinned.is_none()));
+        // Placed while closed, then released while closed.
+        w.send(Command::Place("WLTest".into(), Some(a.clone()))).unwrap();
+        until(&w, "placed on A", &on(&a));
+        let _ = (p3.kill(), p3.wait());
+        until(&w, "closed", &gone);
+        w.send(Command::Place("WLTest".into(), None)).unwrap();
+        thread::sleep(Duration::from_millis(500));
+        let mut p4 = play();
+        until(&w, "released while closed: comes back on the default, not A", &on(&b));
+        thread::sleep(Duration::from_secs(2));
+        until(&w, "and stays there", &on(&b));
+        // Volume on the desktop's cubic scale.
+        w.send(Command::AppLevel { key: "WLTest".into(), volume: Some(0.5), mute: None }).unwrap();
+        until(&w, "volume reads back 50%", &|x, _| x.and_then(|x| x.volume).is_some_and(|v| (v - 0.5).abs() < 0.01));
+        let node = w.view().apps.iter().find(|x| x.key == "WLTest").unwrap().nodes[0];
+        let dump = Run::new("pw-dump").arg(node.to_string()).output().unwrap().stdout;
+        let dump: serde_json::Value = serde_json::from_slice(&dump).unwrap();
+        let linear = dump[0]["info"]["params"]["Props"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find_map(|p| p["channelVolumes"][0].as_f64())
+            .unwrap();
+        assert!((linear - 0.125).abs() < 0.005, "channelVolumes {linear}");
+        println!("ok   PipeWire holds 0.125 (cubic), as pavucontrol shows 50%");
+        // Placements survive a restart of the engine.
+        w.send(Command::Place("WLTest".into(), Some(a.clone()))).unwrap();
+        until(&w, "placed on A", &on(&a));
+        w.stop();
+        let w = Worker::spawn();
+        until(&w, "after an engine restart: still placed on A", &|x, v| on(&a)(x, v) && x.is_some_and(|x| x.pinned.as_deref() == Some(a.as_str())));
+        w.send(Command::Place("WLTest".into(), None)).unwrap();
+        until(&w, "back on the default", &on(&b));
+        let _ = (p4.kill(), p4.wait());
+        let _ = fs::remove_dir_all(&config);
     }
 }

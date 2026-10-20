@@ -61,7 +61,7 @@ struct ag_object {
 /* Current `target.object` metadata value of one stream subject. */
 struct ag_target {
   uint32_t subject;
-  char value[64];
+  char value[256];
   struct ag_target *next;
 };
 
@@ -187,7 +187,7 @@ static int ag_metadata_property(void *data, uint32_t subject, const char *key,
   }
   if (!spa_streq(key, "target.object")) return 0;
   ag_targets_clear(g, subject, false);
-  if (value && strlen(value) < 64) {
+  if (value && strlen(value) < sizeof(((struct ag_target *)0)->value)) {
     struct ag_target *t = calloc(1, sizeof(*t));
     if (t) {
       t->subject = subject;
@@ -217,7 +217,9 @@ static void ag_node_info(void *data, const struct pw_node_info *info) {
   o->info = true;
 }
 /* Average channel volume and mute from a Props param; false when it is not
- * the main Props object. */
+ * the main Props object. The volume is on the cubic scale desktop mixers
+ * show (PipeWire's channelVolumes are linear amplitude): 50% here is 50% in
+ * Plasma's volume applet and pavucontrol. */
 static bool ag_parse_level(const struct spa_pod *param, float *volume, bool *mute,
                            uint32_t *channels) {
   struct spa_pod *volumes = NULL;
@@ -232,7 +234,7 @@ static bool ag_parse_level(const struct spa_pod *param, float *volume, bool *mut
   if (!n) return false;
   float sum = 0.f;
   for (uint32_t i = 0; i < n; i++) sum += isfinite(values[i]) ? values[i] : 0.f;
-  *volume = sum / (float)n;
+  *volume = cbrtf(sum / (float)n);
   *mute = m;
   *channels = n;
   return true;
@@ -630,6 +632,12 @@ static struct ag_object *ag_playing_on(struct audio_graph *g, struct ag_object *
 }
 /* The output a stream is explicitly targeted at (`target.object`), or NULL
  * when it follows the default. */
+/* The raw `target.object` of a stream, or NULL. */
+static const char *ag_target_raw(struct audio_graph *g, struct ag_object *stream) {
+  for (struct ag_target *t = g->targets; t; t = t->next)
+    if (t->subject == stream->id) return t->value;
+  return NULL;
+}
 static struct ag_object *ag_targeted_at(struct audio_graph *g, struct ag_object *stream) {
   for (struct ag_target *t = g->targets; t; t = t->next) {
     if (t->subject != stream->id) continue;
@@ -726,7 +734,9 @@ int ag_snapshot(struct audio_graph *g, char *out, size_t size) {
     ag_put(&buf, &left, "\t");
     ag_hex(&buf, &left, on ? ag_prop(on, PW_KEY_NODE_NAME) : NULL);
     ag_put(&buf, &left, "\t");
-    ag_hex(&buf, &left, at ? ag_prop(at, PW_KEY_NODE_NAME) : NULL);
+    /* A target that is gone (an unplugged device) still counts: as its raw
+     * value, so it can be cleared. */
+    ag_hex(&buf, &left, at ? ag_prop(at, PW_KEY_NODE_NAME) : ag_target_raw(g, o));
     ag_put(&buf, &left, "\t%.6f\t%d\t%.6f\n", o->level_known ? (double)o->volume : -1.0,
            o->level_known && o->mute, (double)ag_level_of(g, o->id));
   }
@@ -797,7 +807,7 @@ int ag_set_level(struct audio_graph *g, uint32_t node, float volume, int mute) {
       if (n < 1 || n > SPA_AUDIO_MAX_CHANNELS) n = (uint32_t)ag_num(ag_prop(o, PW_KEY_AUDIO_CHANNELS));
       if (n < 1 || n > SPA_AUDIO_MAX_CHANNELS) n = 2;
       float values[SPA_AUDIO_MAX_CHANNELS];
-      for (uint32_t i = 0; i < n; i++) values[i] = volume;
+      for (uint32_t i = 0; i < n; i++) values[i] = volume * volume * volume;
       spa_pod_builder_add(&pb, SPA_PROP_channelVolumes,
                           SPA_POD_Array(sizeof(float), SPA_TYPE_Float, n, values), 0);
     }

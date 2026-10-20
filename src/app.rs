@@ -24,6 +24,9 @@ pub(crate) struct Core {
     /// The tray's volume flyout, while open.
     pub(crate) flyout_window: Option<AnyWindowHandle>,
     pub(crate) map_minimal: bool,
+    /// The map draws light (no blur, shadows, glows or flowing cables): the
+    /// CPU renderer, or slow frames measured when it last opened.
+    pub(crate) map_light: bool,
     /// The open map should fade out and close.
     pub(crate) map_close_requested: bool,
     hotkey: crate::hotkey::Hotkey,
@@ -54,7 +57,7 @@ fn load_hidden() -> BTreeSet<String> {
             }
             let bytes = (0..hex.len())
                 .step_by(2)
-                .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).ok())
+                .map(|i| u8::from_str_radix(hex.get(i..i + 2)?, 16).ok())
                 .collect::<Option<Vec<_>>>()?;
             String::from_utf8(bytes).ok()
         })
@@ -110,6 +113,7 @@ pub fn run(hidden: bool, instance: Option<crate::single_instance::Instance>) {
             map_window: None,
             flyout_window: None,
             map_minimal: false,
+            map_light: std::env::var("VK_DRIVER_FILES").is_ok_and(|f| f.contains("lvp_icd")),
             map_close_requested: false,
             hotkey: crate::hotkey::Hotkey::spawn(),
             tray: crate::tray::Tray::spawn(),
