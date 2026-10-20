@@ -30,6 +30,11 @@ pub(crate) struct Core {
     /// The open map should fade out and close.
     pub(crate) map_close_requested: bool,
     pub(crate) hotkey: crate::hotkey::Hotkey,
+    pub(crate) updates: crate::updates::Updates,
+    /// Asked for from the tray: the flyout shows the check's result.
+    pub(crate) update_asked: bool,
+    /// Update clicked: install as soon as the download is verified.
+    pub(crate) install_when_ready: bool,
     tray: crate::tray::Tray,
     instance: Option<crate::single_instance::Instance>,
 }
@@ -116,6 +121,9 @@ pub fn run(hidden: bool, instance: Option<crate::single_instance::Instance>) {
             map_light: std::env::var("VK_DRIVER_FILES").is_ok_and(|f| f.contains("lvp_icd")),
             map_close_requested: false,
             hotkey: crate::hotkey::Hotkey::spawn(),
+            updates: crate::updates::Updates::load(),
+            update_asked: false,
+            install_when_ready: false,
             tray: crate::tray::Tray::spawn(),
             instance,
         });
@@ -148,6 +156,43 @@ pub fn run(hidden: bool, instance: Option<crate::single_instance::Instance>) {
     });
 }
 
+/// Update checks: the feed, the tray menu, and the flyout while it shows them.
+fn update_tick(actions: u8, cx: &mut App) {
+    use crate::updates::{Phase, UpdateMode};
+    let core = cx.global_mut::<Core>();
+    if actions & crate::tray::CHECK != 0 {
+        core.update_asked = true;
+        core.updates.check_now();
+    }
+    if actions & crate::tray::AUTO_CHECK != 0 {
+        let mode = match core.updates.view().mode {
+            UpdateMode::Notify => UpdateMode::Off,
+            UpdateMode::Off => UpdateMode::Notify,
+        };
+        if let Err(error) = core.updates.set_mode(mode) {
+            eprintln!("Wavelane updates: {error}");
+        }
+    }
+    let mut changed = core.updates.poll();
+    let _ = core.updates.take_announcement();
+    let view = core.updates.view();
+    if core.install_when_ready && view.phase == Phase::Ready {
+        core.install_when_ready = false;
+        core.updates.start_install();
+        changed = true;
+    }
+    let latest = view.latest.clone().filter(|_| !matches!(view.phase, Phase::UpToDate | Phase::Checking | Phase::Idle));
+    core.tray.set_update(crate::tray::UpdateMenu { latest, automatic: view.mode == UpdateMode::Notify });
+    let open = core.flyout_window;
+    if actions & crate::tray::CHECK != 0 && open.is_none_or(|w| !cx.windows().contains(&w)) {
+        crate::flyout::toggle(cx);
+    } else if changed {
+        if let Some(handle) = open {
+            let _ = handle.update(cx, |_, window, _| window.refresh());
+        }
+    }
+}
+
 /// Requests from the tray, the shortcut and later launches. True quits.
 fn tick(cx: &mut App) -> bool {
     let requests = cx
@@ -178,6 +223,7 @@ fn tick(cx: &mut App) -> bool {
         let token = cx.global::<Core>().tray.take_activation_token();
         crate::map::toggle(token, cx);
     }
+    update_tick(actions, cx);
     // Without a tray host there is no way back after closing the map.
     let _ = cx.global::<Core>().tray.available();
     false

@@ -10,6 +10,10 @@ description = "Drag each application's sound onto any output: a sound map over t
 gpui-kit = "=0.7.3"
 anyhow = "1"
 serde_json = "1"
+# Updates: release feed, SHA-256 checks (as LinX).
+semver = "=1.0.28"
+sha2 = "=0.10.9"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "rustls-tls-native-roots"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # The Linux platform gpui-kit runs on; the direct dependency reaches the

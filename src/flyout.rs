@@ -332,6 +332,75 @@ impl Flyout {
     }
 }
 
+impl Flyout {
+    /// A newer Wavelane: what is happening, and the one button for the next
+    /// step (Update downloads and installs; Restart starts the new version).
+    fn update_row(&self, cx: &mut Context<Self>) -> Div {
+        use crate::updates::Phase;
+        let view = cx.global::<Core>().updates.view();
+        let latest = view.latest.clone().unwrap_or_default();
+        let text = match (&view.phase, view.ineligible) {
+            (Phase::Checking, _) => "Checking for updates…".to_owned(),
+            (Phase::UpToDate, _) => format!("Wavelane {} is up to date.", view.current),
+            (Phase::Downloading { percent }, _) => format!("Downloading Wavelane {latest}… {percent}%"),
+            (Phase::Ready | Phase::Installing, _) => format!("Installing Wavelane {latest}…"),
+            (Phase::Installed, _) => format!("Wavelane {latest} is installed."),
+            (Phase::Failed, _) => view.error.clone().unwrap_or_else(|| "The update failed.".into()),
+            (_, Some(reason)) => format!("Wavelane {latest} is available. {reason}"),
+            _ => format!("Wavelane {latest} is available (you have {}).", view.current),
+        };
+        let button = |id: &'static str, label: &str| {
+            div()
+                .id(id)
+                .flex_none()
+                .px(px(12.))
+                .py(px(6.))
+                .rounded(px(8.))
+                .bg(alpha(ACCENT, 0.2))
+                .border_1()
+                .border_color(alpha(ACCENT, 0.6))
+                .text_size(px(12.))
+                .cursor_pointer()
+                .hover(|b| b.bg(alpha(ACCENT, 0.3)))
+                .child(label.to_owned())
+        };
+        let action = match view.phase {
+            Phase::Available | Phase::Failed if view.ineligible.is_none() && view.latest.is_some() => Some(
+                button("fly-update", "Update").on_click(cx.listener(|_, _, _, cx| {
+                    let core = cx.global_mut::<Core>();
+                    core.install_when_ready = true;
+                    core.updates.start_download();
+                    cx.notify();
+                })),
+            ),
+            Phase::Installed => Some(button("fly-restart", "Restart").on_click(cx.listener(|_, _, _, cx| {
+                // Back in the tray, as it was.
+                match cx.global::<Core>().updates.relaunch(&["--hidden".to_owned()], None) {
+                    Ok(()) => {
+                        cx.global_mut::<Core>().worker.stop();
+                        cx.quit();
+                    }
+                    Err(error) => eprintln!("Wavelane: {error}"),
+                }
+            }))),
+            Phase::Available if view.ineligible.is_some() => Some(
+                button("fly-release", "Releases").on_click(|_, _, cx| cx.open_url(crate::updates::RELEASE_PAGE)),
+            ),
+            _ => None,
+        };
+        div()
+            .flex()
+            .items_center()
+            .gap(px(10.))
+            .px(px(12.))
+            .py(px(10.))
+            .rounded(px(10.))
+            .bg(alpha(0xffffff, 0.05))
+            .child(div().flex_1().text_size(px(12.)).text_color(rgb(TEXT)).child(text))
+            .children(action)
+    }
+}
+
 impl Render for Flyout {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.viewed.elapsed() >= Duration::from_millis(150) {
@@ -339,7 +408,7 @@ impl Render for Flyout {
             self.viewed = Instant::now();
         }
         // Apps come and go while it is open: it grows or shrinks with them.
-        let h = height(&self.view);
+        let h = height(&self.view, shows_update(cx));
         if (f32::from(window.viewport_size().height) - h).abs() > 0.5 {
             window.resize(size(px(WIDTH), px(h)));
         }
@@ -410,6 +479,10 @@ impl Render for Flyout {
                         })),
                 ),
         );
+
+        if shows_update(cx) {
+            panel = panel.child(self.update_row(cx));
+        }
 
         if self.view.phase != Phase::Running {
             return div()
@@ -562,10 +635,27 @@ impl Render for Flyout {
 }
 
 /// Height for the flyout's contents now (the window keeps it while open).
-fn height(view: &View) -> f32 {
+fn height(view: &View, update: bool) -> f32 {
     let rows = view.apps.len().clamp(1, MAX_ROWS) as f32;
-    // Header, output block, divider, list, footer, paddings.
-    40. + 74. + 13. + rows * ROW + 28. + 28. + 40.
+    // Header, output block, divider, list, footer, paddings (and the update).
+    40. + 74. + 13. + rows * ROW + 28. + 28. + 40. + if update { UPDATE_ROW } else { 0. }
+}
+
+/// The update row's height with its gap.
+const UPDATE_ROW: f32 = 64.;
+
+/// Whether the flyout shows the update row: a newer version, its download
+/// or install, or the answer to "Check for updates".
+fn shows_update(cx: &App) -> bool {
+    use crate::updates::Phase;
+    let core = cx.global::<Core>();
+    let view = core.updates.view();
+    match view.phase {
+        Phase::Idle => false,
+        Phase::Checking | Phase::UpToDate => core.update_asked,
+        Phase::Failed => core.update_asked || view.latest.is_some(),
+        _ => view.latest.is_some(),
+    }
 }
 
 /// Open the flyout in the tray's corner, or close it when open.
@@ -577,7 +667,7 @@ pub(crate) fn toggle(cx: &mut App) {
             return;
         }
     }
-    let h = height(&cx.global::<Core>().worker.view());
+    let h = height(&cx.global::<Core>().worker.view(), shows_update(cx));
     let options = WindowOptions {
         kind: WindowKind::LayerShell(layer_shell::LayerShellOptions {
             namespace: "wavelane-flyout".into(),

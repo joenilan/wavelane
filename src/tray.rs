@@ -11,11 +11,24 @@ pub const MAP: u8 = 1;
 pub const QUIT: u8 = 2;
 /// A click on the icon: the volume flyout.
 pub const FLYOUT: u8 = 4;
+/// "Check for updates".
+pub const CHECK: u8 = 8;
+/// "Check for updates automatically" toggled.
+pub const AUTO_CHECK: u8 = 16;
+
+/// What the menu shows about updates: the newer version, and whether
+/// checks are automatic.
+#[derive(Clone, Default, PartialEq)]
+pub struct UpdateMenu {
+    pub latest: Option<String>,
+    pub automatic: bool,
+}
 
 struct Item {
     actions: Arc<AtomicU8>,
     /// xdg-activation token from the tray host for the latest click.
     token: Arc<Mutex<Option<String>>>,
+    update: Arc<Mutex<UpdateMenu>>,
 }
 impl ksni::Tray for Item {
     fn provide_xdg_activation_token(&mut self, token: String) {
@@ -25,7 +38,7 @@ impl ksni::Tray for Item {
         "wavelane".into()
     }
     fn title(&self) -> String {
-        "Wavelane".into()
+        if crate::updates::dev_build() { "Wavelane (dev)" } else { "Wavelane" }.into()
     }
     fn icon_name(&self) -> String {
         // The drawn symbolic icon, which suits a panel, rather than the
@@ -48,7 +61,22 @@ impl ksni::Tray for Item {
     }
     fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
         use ksni::menu::{CheckmarkItem, StandardItem};
-        vec![
+        let update = self.update.lock().map(|u| u.clone()).unwrap_or_default();
+        let mut items: Vec<ksni::MenuItem<Self>> = Vec::new();
+        if let Some(latest) = &update.latest {
+            items.push(
+                StandardItem {
+                    label: format!("Update to {latest}…"),
+                    activate: Box::new(|item: &mut Self| {
+                        item.actions.fetch_or(FLYOUT, Ordering::Release);
+                    }),
+                    ..Default::default()
+                }
+                .into(),
+            );
+            items.push(ksni::MenuItem::Separator);
+        }
+        items.extend([
             StandardItem {
                 label: "Open map".into(),
                 activate: Box::new(|item: &mut Self| {
@@ -64,6 +92,23 @@ impl ksni::Tray for Item {
                 ..Default::default()
             }
             .into(),
+            StandardItem {
+                label: "Check for updates".into(),
+                activate: Box::new(|item: &mut Self| {
+                    item.actions.fetch_or(CHECK, Ordering::Release);
+                }),
+                ..Default::default()
+            }
+            .into(),
+            CheckmarkItem {
+                label: "Check for updates automatically".into(),
+                checked: update.automatic,
+                activate: Box::new(|item: &mut Self| {
+                    item.actions.fetch_or(AUTO_CHECK, Ordering::Release);
+                }),
+                ..Default::default()
+            }
+            .into(),
             ksni::MenuItem::Separator,
             StandardItem {
                 label: "Quit".into(),
@@ -73,7 +118,8 @@ impl ksni::Tray for Item {
                 ..Default::default()
             }
             .into(),
-        ]
+        ]);
+        items
     }
 }
 
@@ -81,24 +127,42 @@ pub struct Tray {
     actions: Arc<AtomicU8>,
     token: Arc<Mutex<Option<String>>>,
     available: Arc<Mutex<Option<bool>>>,
+    update: Arc<Mutex<UpdateMenu>>,
+    /// The menu changed; the tray thread tells the host.
+    dirty: Arc<std::sync::atomic::AtomicBool>,
 }
 impl Tray {
     pub fn spawn() -> Self {
         let actions = Arc::new(AtomicU8::new(0));
         let token = Arc::new(Mutex::new(None));
         let available = Arc::new(Mutex::new(None));
+        let update = Arc::new(Mutex::new(UpdateMenu::default()));
+        let dirty = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let (flags, click, ready) = (actions.clone(), token.clone(), available.clone());
-        std::thread::spawn(move || match (Item { actions: flags, token: click }).spawn() {
+        let (menu, changed) = (update.clone(), dirty.clone());
+        std::thread::spawn(move || match (Item { actions: flags, token: click, update: menu }).spawn() {
             Ok(handle) => {
                 *ready.lock().unwrap() = Some(true);
                 while !handle.is_closed() {
                     std::thread::sleep(std::time::Duration::from_millis(250));
+                    if changed.swap(false, Ordering::AcqRel) {
+                        handle.update(|_| {});
+                    }
                 }
                 *ready.lock().unwrap() = Some(false);
             }
             Err(_) => *ready.lock().unwrap() = Some(false),
         });
-        Self { actions, token, available }
+        Self { actions, token, available, update, dirty }
+    }
+    /// What the menu says about updates.
+    pub fn set_update(&self, menu: UpdateMenu) {
+        if let Ok(mut current) = self.update.lock() {
+            if *current != menu {
+                *current = menu;
+                self.dirty.store(true, Ordering::Release);
+            }
+        }
     }
     pub fn actions(&self) -> u8 {
         self.actions.swap(0, Ordering::AcqRel)

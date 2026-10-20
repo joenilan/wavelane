@@ -8,6 +8,7 @@ mod hotkey;
 mod map;
 mod single_instance;
 mod tray;
+mod updates;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
