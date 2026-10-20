@@ -10,7 +10,22 @@ sound there. Scroll on an app for its volume, middle-click to mute; every move
 can be undone. A device with several outputs (a GoXLR, a RØDECaster, BEACN
 Studio channels through LinX) shows as a hub with one port per output.
 
+Clicking the tray icon opens a small flyout: the default output, and each
+application's volume, mute and output. The map's shortcut is suggested as
+**Ctrl+Alt+M** (change it in your desktop's shortcut settings). On weak
+graphics the map switches itself to light drawing: no blur or glows, and it
+redraws only when something changes.
+
 Linux (PipeWire) first; Windows later.
+
+## Install
+
+Packages for Fedora (rpm), Debian/Ubuntu (deb) and Arch, and a portable
+tarball, come with each [release](https://github.com/joenilan/wavelane/releases);
+the signed `joenilan apps` repositories at
+<https://joenilan.github.io/packages/> carry them too. Wavelane checks for
+updates (tray menu → *Check for updates*) and installs them from the tray
+flyout.
 
 ## Build
 
@@ -18,6 +33,7 @@ Needs Rust 1.99+, a C compiler and PipeWire development headers
 (`pipewire-devel` on Fedora, `libpipewire-0.3-dev` on Debian).
 
     cargo build --release
+    cargo build --release --features dev-shortcut   # suggests Ctrl+Alt+W, next to LinX's Ctrl+Alt+M
     ./target/release/wavelane          # opens the map (Wavelane stays in the tray)
     ./target/release/wavelane --dump   # what it sees, without the interface
 
@@ -29,3 +45,15 @@ session manager moves it. Wavelane remembers each placement
 (`~/.config/wavelane/placements`) and applies it to that application's new
 streams. Live levels come from passive captures that never keep a device
 awake and never store audio.
+
+## Releases
+
+`packaging/release.sh` builds the signed rpm, the deb and tarball (Debian 13
+container) and the Arch package (Arch container) from the current commit into
+`local/release/v<version>/`; `packaging/publish.sh NOTES.md` publishes them
+(GitHub release and the package repositories). Versions are SemVer; a
+pre-release `0.2.0-preview.3` is `0.2.0~preview.3` in rpm and deb.
+
+## License
+
+GPL-3.0-only. Third-party notices ship with every package.
