@@ -47,7 +47,7 @@ impl ksni::Tray for Item {
         self.actions.fetch_or(FLYOUT, Ordering::Release);
     }
     fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
-        use ksni::menu::StandardItem;
+        use ksni::menu::{CheckmarkItem, StandardItem};
         vec![
             StandardItem {
                 label: "Open map".into(),
@@ -57,6 +57,14 @@ impl ksni::Tray for Item {
                 ..Default::default()
             }
             .into(),
+            CheckmarkItem {
+                label: "Launch at login".into(),
+                checked: autostart_path().is_some_and(|p| p.exists()),
+                activate: Box::new(|_: &mut Self| set_autostart(!autostart_path().is_some_and(|p| p.exists()))),
+                ..Default::default()
+            }
+            .into(),
+            ksni::MenuItem::Separator,
             StandardItem {
                 label: "Quit".into(),
                 activate: Box::new(|item: &mut Self| {
@@ -130,4 +138,30 @@ fn icon_pixmaps() -> Vec<ksni::Icon> {
             Some(ksni::Icon { width: size as i32, height: size as i32, data })
         })
         .collect()
+}
+
+/// `~/.config/autostart/digital.zombie.wavelane.desktop`.
+fn autostart_path() -> Option<std::path::PathBuf> {
+    let config = std::env::var_os("XDG_CONFIG_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))?;
+    Some(config.join("autostart").join("digital.zombie.wavelane.desktop"))
+}
+
+/// Start Wavelane in the tray at login (this executable), or stop doing so.
+fn set_autostart(on: bool) {
+    let Some(path) = autostart_path() else { return };
+    if !on {
+        let _ = std::fs::remove_file(&path);
+        return;
+    }
+    let Ok(exe) = std::env::current_exe() else { return };
+    let entry = format!(
+        "[Desktop Entry]\nType=Application\nName=Wavelane\nComment=Where every app's sound goes\nExec=\"{}\" --hidden\nIcon=digital.zombie.wavelane\nX-GNOME-Autostart-enabled=true\nNoDisplay=true\n",
+        exe.display()
+    );
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(&path, entry);
 }

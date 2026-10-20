@@ -198,6 +198,8 @@ pub struct SoundMap {
     volume_edit: Option<(String, f32, Instant)>,
     /// Mute just toggled (middle click), shown until PipeWire echoes it.
     mute_edit: Option<(String, bool, Instant)>,
+    /// An output's volume just set by scrolling on it.
+    output_edit: Option<(String, f32, Instant)>,
     hub: Option<Hub>,
     /// Smoothed live levels by output name and by application key.
     out_levels: BTreeMap<String, f32>,
@@ -274,6 +276,7 @@ impl SoundMap {
             order: Vec::new(),
             volume_edit: None,
             mute_edit: None,
+            output_edit: None,
             hub: None,
             out_levels: BTreeMap::new(),
             app_levels: BTreeMap::new(),
@@ -903,6 +906,32 @@ impl SoundMap {
         cx.notify();
     }
 
+    /// Scroll on an output: its own volume, in 5% steps.
+    fn scroll_output(&mut self, name: String, event: &ScrollWheelEvent, cx: &mut Context<Self>) {
+        cx.stop_propagation();
+        let lines = match event.delta {
+            ScrollDelta::Lines(p) => p.y,
+            ScrollDelta::Pixels(p) => f32::from(p.y) / 40.,
+        };
+        if lines == 0. {
+            return;
+        }
+        let volume = ((self.output_volume(&name) + lines * 0.05) * 100.).round().clamp(0., 100.) / 100.;
+        self.output_edit = Some((name.clone(), volume, Instant::now()));
+        self.send(Command::OutputLevel { name, volume: Some(volume), mute: None }, cx);
+        cx.notify();
+    }
+
+    /// An output's volume as shown: a just-set value, else PipeWire's.
+    fn output_volume(&self, name: &str) -> f32 {
+        if let Some((n, v, at)) = &self.output_edit {
+            if n == name && at.elapsed() < Duration::from_millis(1500) {
+                return *v;
+            }
+        }
+        self.view.outputs.iter().find(|o| o.name == name).and_then(|o| o.volume).unwrap_or(1.)
+    }
+
     /// Middle click on an application: mute or unmute it.
     fn toggle_mute(&mut self, key: String, cx: &mut Context<Self>) {
         cx.stop_propagation();
@@ -1249,7 +1278,7 @@ impl Render for SoundMap {
                         .gap(d(4.))
                         .child(div().text_size(d(26.)).font_weight(FontWeight::BOLD).child("Wavelane"))
                         .child(div().text_size(d(13.)).text_color(rgb(MUTED)).child(
-                            "Drag an app onto an output, or pick one with the arrow keys and press an output's key (Shift moves everything). Scroll an app for its volume, middle-click to mute. Ctrl+Z undoes, Esc closes.",
+                            "Drag an app onto an output, or pick one with the arrow keys and press an output's key (Shift moves everything). Scroll an app or an output for its volume, middle-click an app to mute. Ctrl+Z undoes, Esc closes.",
                         )),
                 )
                 .child(
@@ -1453,12 +1482,26 @@ impl Render for SoundMap {
                 (_, n) => format!("{n} apps"),
             };
             let sub = if is_default { format!("default · {sub}") } else { sub };
+            let sub = match self.output_of(&zone.spot).filter(|_| zone.spot != Spot::Studio) {
+                Some(name) => {
+                    let volume = self.output_volume(&name);
+                    let adjusting = self.output_edit.as_ref().is_some_and(|(n, _, at)| n == &name && at.elapsed() < Duration::from_millis(1500));
+                    if adjusting || volume < 0.995 { format!("{sub} · {:.0}%", volume * 100.) } else { sub }
+                }
+                None => sub,
+            };
+            let scroll_name = self.output_of(&zone.spot).filter(|_| zone.spot != Spot::Studio && zone.spot != Spot::Loose);
             match zone.shape {
                 Shape::Circle(c, r) => {
                     let level = self.output_of(&zone.spot).and_then(|o| self.out_levels.get(&o).copied()).unwrap_or(0.);
                     let is_port = matches!(zone.spot, Spot::Port(_));
                     let size = if hot { r * 2.2 } else { r * 2. };
                     let mut el = div()
+                        .when_some(scroll_name.clone(), |el, name| {
+                            el.on_scroll_wheel(cx.listener(move |this, event: &ScrollWheelEvent, _, cx| {
+                                this.scroll_output(name.clone(), event, cx)
+                            }))
+                        })
                         .absolute()
                         .left(x(c.0 - size / 2.))
                         .top(y(c.1 - size / 2.))
@@ -1513,6 +1556,11 @@ impl Render for SoundMap {
                 }
                 Shape::Rect(a, b) => {
                     let el = div()
+                        .when_some(scroll_name.clone(), |el, name| {
+                            el.on_scroll_wheel(cx.listener(move |this, event: &ScrollWheelEvent, _, cx| {
+                                this.scroll_output(name.clone(), event, cx)
+                            }))
+                        })
                         .absolute()
                         .left(x(a.0))
                         .top(y(a.1))
