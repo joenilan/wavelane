@@ -28,6 +28,10 @@ impl ksni::Tray for Item {
     fn icon_name(&self) -> String {
         "digital.zombie.wavelane".into()
     }
+    /// Drawn here too: a tray host may not find a freshly installed icon.
+    fn icon_pixmap(&self) -> Vec<ksni::Icon> {
+        icon_pixmaps()
+    }
     fn tool_tip(&self) -> ksni::ToolTip {
         ksni::ToolTip {
             title: "Wavelane".into(),
@@ -94,4 +98,32 @@ impl Tray {
     pub fn available(&self) -> Option<bool> {
         *self.available.lock().unwrap()
     }
+}
+
+/// The app icon at tray sizes, as ARGB32 (network byte order).
+fn icon_pixmaps() -> Vec<ksni::Icon> {
+    use resvg::{tiny_skia, usvg};
+    let Ok(tree) = usvg::Tree::from_str(
+        include_str!("../packaging/digital.zombie.wavelane.svg"),
+        &usvg::Options::default(),
+    ) else {
+        return Vec::new();
+    };
+    [22u32, 32, 48, 64]
+        .into_iter()
+        .filter_map(|size| {
+            let mut pixmap = tiny_skia::Pixmap::new(size, size)?;
+            let scale = size as f32 / tree.size().width();
+            resvg::render(&tree, tiny_skia::Transform::from_scale(scale, scale), &mut pixmap.as_mut());
+            let data = pixmap
+                .pixels()
+                .iter()
+                .flat_map(|p| {
+                    let c = p.demultiply();
+                    [c.alpha(), c.red(), c.green(), c.blue()]
+                })
+                .collect();
+            Some(ksni::Icon { width: size as i32, height: size as i32, data })
+        })
+        .collect()
 }

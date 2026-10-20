@@ -19,8 +19,9 @@ gpui-pre-linux = "=0.3.9"
 ashpd = { version = "=0.13.13", default-features = false, features = ["global_shortcuts", "async-io"] }
 tokio = { version = "1", features = ["rt", "net", "time"] }
 futures-util = "0.3"
-# Tray icon (StatusNotifierItem).
+# Tray icon (StatusNotifierItem), drawn from the app's SVG.
 ksni = { version = "=0.3.6", features = ["blocking"] }
+resvg = { version = "=0.45.1", default-features = false }
 
 [workspace]
 

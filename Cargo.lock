@@ -6931,6 +6931,7 @@ dependencies = [
  "gpui-kit",
  "gpui-pre-linux",
  "ksni",
+ "resvg 0.45.1",
  "serde_json",
  "tokio",
 ]
