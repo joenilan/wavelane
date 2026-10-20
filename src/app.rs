@@ -1,0 +1,170 @@
+//! Wavelane lives in the tray; the map opens over the screen from the tray,
+//! the system-wide shortcut, or another launch (`wavelane`, `wavelane --map`).
+use crate::engine::Worker;
+use gpui_kit::*;
+use std::{
+    borrow::Cow,
+    collections::BTreeSet,
+    fs,
+    path::PathBuf,
+    time::Duration,
+};
+
+/// Control-safe identifier for an application key or output name.
+pub(crate) fn key_id(key: &str) -> String {
+    key.bytes().map(|b| format!("{b:02x}")).collect()
+}
+
+/// App-wide state: the engine, and the map window while it is open.
+pub(crate) struct Core {
+    pub(crate) worker: Worker,
+    /// Outputs hidden from the map (shown again while editing devices).
+    pub(crate) hidden_outputs: BTreeSet<String>,
+    pub(crate) map_window: Option<AnyWindowHandle>,
+    pub(crate) map_minimal: bool,
+    /// The open map should fade out and close.
+    pub(crate) map_close_requested: bool,
+    hotkey: crate::hotkey::Hotkey,
+    tray: crate::tray::Tray,
+    instance: Option<crate::single_instance::Instance>,
+}
+impl Global for Core {}
+
+fn config_dir() -> Option<PathBuf> {
+    std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
+        .map(|c| c.join("wavelane"))
+}
+/// Hidden outputs: `~/.config/wavelane/hidden-outputs`, one hex name a line.
+fn load_hidden() -> BTreeSet<String> {
+    let Some(text) = config_dir().and_then(|d| fs::read_to_string(d.join("hidden-outputs")).ok()) else {
+        return BTreeSet::new();
+    };
+    let mut lines = text.lines();
+    if lines.next() != Some("wavelane-hidden-outputs=1") {
+        return BTreeSet::new();
+    }
+    lines
+        .filter_map(|hex| {
+            if hex.is_empty() || hex.len() % 2 != 0 {
+                return None;
+            }
+            let bytes = (0..hex.len())
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).ok())
+                .collect::<Option<Vec<_>>>()?;
+            String::from_utf8(bytes).ok()
+        })
+        .collect()
+}
+pub(crate) fn save_hidden(hidden: &BTreeSet<String>) {
+    let Some(dir) = config_dir() else { return };
+    let mut text = String::from("wavelane-hidden-outputs=1\n");
+    for name in hidden {
+        text.push_str(&key_id(name));
+        text.push('\n');
+    }
+    let temp = dir.join(format!(".hidden-outputs-{}", std::process::id()));
+    if fs::create_dir_all(&dir).is_ok() && fs::write(&temp, text).is_ok() {
+        let _ = fs::rename(&temp, dir.join("hidden-outputs"));
+    }
+}
+
+/// The map's small line icons, drawn in the current text color.
+struct Assets;
+impl AssetSource for Assets {
+    fn load(&self, path: &str) -> anyhow::Result<Option<Cow<'static, [u8]>>> {
+        let shape = match path {
+            "console/speaker.svg" => "M11 5 6 9H3v6h3l5 4ZM15 8a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14",
+            "console/headphones.svg" => "M3 18v-6a9 9 0 0 1 18 0v6M21 19a2 2 0 0 1-2 2h-1v-6h3ZM3 19a2 2 0 0 0 2 2h1v-6H3Z",
+            "console/monitor.svg" => "M4 4h16a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2ZM8 21h8M12 17v4",
+            "console/orbit.svg" => "M12 9a3 3 0 1 1 0 6 3 3 0 0 1 0-6ZM4.5 7.5a9 9 0 0 1 13-2.6M19.5 16.5a9 9 0 0 1-13 2.6M19 5a1.5 1.5 0 1 1 0 .1M5 19a1.5 1.5 0 1 1 0 .1",
+            "console/close.svg" => "M6 6l12 12M18 6 6 18",
+            _ => return Ok(None),
+        };
+        Ok(Some(Cow::Owned(
+            format!(
+                "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><path d=\"{shape}\" fill=\"none\" stroke=\"black\" stroke-width=\"1.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>"
+            )
+            .into_bytes(),
+        )))
+    }
+    fn list(&self, _path: &str) -> anyhow::Result<Vec<SharedString>> {
+        Ok(Vec::new())
+    }
+}
+
+/// Run Wavelane: the engine, tray, shortcut and (unless started hidden) the
+/// map right away.
+pub fn run(hidden: bool, instance: Option<crate::single_instance::Instance>) {
+    application().with_assets(Assets).run(move |cx| {
+        init(cx);
+        cx.set_quit_mode(QuitMode::Explicit);
+        cx.set_global(Core {
+            worker: Worker::spawn(),
+            hidden_outputs: load_hidden(),
+            map_window: None,
+            map_minimal: false,
+            map_close_requested: false,
+            hotkey: crate::hotkey::Hotkey::spawn(),
+            tray: crate::tray::Tray::spawn(),
+            instance,
+        });
+        cx.on_window_closed(|cx, _| {
+            let open = cx.windows();
+            let core = cx.global_mut::<Core>();
+            if core.map_window.is_some_and(|w| !open.contains(&w)) {
+                core.map_window = None;
+            }
+        })
+        .detach();
+        if !hidden {
+            crate::map::toggle(None, cx);
+        }
+        cx.spawn(async move |cx| loop {
+            cx.background_executor().timer(Duration::from_millis(100)).await;
+            let quit = cx.update(tick);
+            if quit {
+                let _ = cx.update(|cx| {
+                    cx.global_mut::<Core>().worker.stop();
+                    cx.quit();
+                });
+                break;
+            }
+        })
+        .detach();
+    });
+}
+
+/// Requests from the tray, the shortcut and later launches. True quits.
+fn tick(cx: &mut App) -> bool {
+    let requests = cx
+        .global::<Core>()
+        .instance
+        .as_ref()
+        .map(|i| i.requests())
+        .unwrap_or_default();
+    for request in requests {
+        match request {
+            crate::single_instance::Request::Map(token) | crate::single_instance::Request::Show(token) => {
+                crate::map::toggle(token, cx)
+            }
+            crate::single_instance::Request::Hidden => {}
+        }
+    }
+    if cx.global::<Core>().hotkey.take() {
+        crate::map::toggle(None, cx);
+    }
+    let actions = cx.global::<Core>().tray.actions();
+    if actions & crate::tray::QUIT != 0 {
+        return true;
+    }
+    if actions & crate::tray::MAP != 0 {
+        let token = cx.global::<Core>().tray.take_activation_token();
+        crate::map::toggle(token, cx);
+    }
+    // Without a tray host there is no way back after closing the map.
+    let _ = cx.global::<Core>().tray.available();
+    false
+}

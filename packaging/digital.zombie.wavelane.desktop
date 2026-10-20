@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Wavelane
+GenericName=Audio routing map
+Comment=See where every app's sound goes, and drag it onto any output
+Exec=wavelane
+Icon=digital.zombie.wavelane
+Categories=AudioVideo;Audio;Mixer;
+Keywords=audio;sound;output;routing;volume;pipewire;
+StartupNotify=false
