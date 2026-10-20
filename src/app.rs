@@ -29,7 +29,7 @@ pub(crate) struct Core {
     pub(crate) map_light: bool,
     /// The open map should fade out and close.
     pub(crate) map_close_requested: bool,
-    hotkey: crate::hotkey::Hotkey,
+    pub(crate) hotkey: crate::hotkey::Hotkey,
     tray: crate::tray::Tray,
     instance: Option<crate::single_instance::Instance>,
 }

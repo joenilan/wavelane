@@ -23,6 +23,11 @@ futures-util = "0.3"
 ksni = { version = "=0.3.6", features = ["blocking"] }
 resvg = { version = "=0.45.1", default-features = false }
 
+[features]
+# Development builds suggest Ctrl+Alt+W for the map, leaving Ctrl+Alt+M to
+# LinX on the same desktop. Releases suggest Ctrl+Alt+M.
+dev-shortcut = []
+
 [workspace]
 
 [profile.dev]

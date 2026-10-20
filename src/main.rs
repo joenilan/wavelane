@@ -11,12 +11,17 @@ mod tray;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| a == "--version") {
+        println!("Wavelane {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
     if args.iter().any(|a| a == "--help") {
         println!(
             "Wavelane: see where every application's sound goes, and drag it onto any output.\n\
              --map      open or close the map (bind this to a key, or use the shortcut)\n\
              --hidden   start in the tray (login autostart)\n\
-             --dump     print what the engine sees and exit"
+             --dump     print what the engine sees and exit\n\
+             --version  print the version"
         );
         return;
     }

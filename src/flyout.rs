@@ -520,12 +520,15 @@ impl Render for Flyout {
             );
         }
         panel = panel.child(list);
-        panel = panel.child(
-            div()
-                .text_size(px(11.))
-                .text_color(rgb(0x747c82))
-                .child("Ctrl+Alt+W opens the map anytime."),
-        );
+        // The key the desktop actually bound (changeable in its settings).
+        if let Some(key) = cx.global::<Core>().hotkey.trigger() {
+            panel = panel.child(
+                div()
+                    .text_size(px(11.))
+                    .text_color(rgb(0x747c82))
+                    .child(format!("{key} opens the map anytime.")),
+            );
+        }
 
         div()
             .id("flyout")

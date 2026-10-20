@@ -6,30 +6,42 @@ use ashpd::desktop::global_shortcuts::{GlobalShortcuts, NewShortcut};
 use futures_util::StreamExt;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc,
+    Arc, Mutex,
 };
 
 const SHORTCUT: &str = "toggle-map";
-/// Suggested key; the desktop may assign another or none.
+/// Suggested key; the desktop may assign another or none. Development
+/// builds (`--features dev-shortcut`) suggest another, so they can run next
+/// to LinX, which suggests Ctrl+Alt+M too.
+#[cfg(not(feature = "dev-shortcut"))]
+const PREFERRED: &str = "CTRL+ALT+M";
+#[cfg(feature = "dev-shortcut")]
 const PREFERRED: &str = "CTRL+ALT+W";
 
 pub(crate) struct Hotkey {
     pressed: Arc<AtomicBool>,
+    /// The key the desktop bound, as it describes it ("Ctrl+Alt+M").
+    trigger: Arc<Mutex<Option<String>>>,
 }
 impl Hotkey {
     pub(crate) fn spawn() -> Self {
         let pressed = Arc::new(AtomicBool::new(false));
-        let flag = pressed.clone();
+        let trigger = Arc::new(Mutex::new(None));
+        let (flag, bound) = (pressed.clone(), trigger.clone());
         let _ = std::thread::Builder::new().name("wavelane-hotkey".into()).spawn(move || {
             let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
                 Ok(runtime) => runtime,
                 Err(error) => return eprintln!("Wavelane shortcut unavailable: {error}"),
             };
-            if let Err(error) = runtime.block_on(listen(flag)) {
+            if let Err(error) = runtime.block_on(listen(flag, bound)) {
                 eprintln!("Wavelane shortcut unavailable: {error}");
             }
         });
-        Self { pressed }
+        Self { pressed, trigger }
+    }
+    /// The bound key, once the desktop has answered and when it gave one.
+    pub(crate) fn trigger(&self) -> Option<String> {
+        self.trigger.lock().ok()?.clone()
     }
     /// The shortcut was pressed since the last call.
     pub(crate) fn take(&self) -> bool {
@@ -37,7 +49,7 @@ impl Hotkey {
     }
 }
 
-async fn listen(pressed: Arc<AtomicBool>) -> ashpd::Result<()> {
+async fn listen(pressed: Arc<AtomicBool>, trigger: Arc<Mutex<Option<String>>>) -> ashpd::Result<()> {
     // A connection of its own: the portal ties the app ID to the connection
     // that registers it, before any other portal call on it.
     let connection = ashpd::zbus::Connection::session().await?;
@@ -56,6 +68,12 @@ async fn listen(pressed: Arc<AtomicBool>) -> ashpd::Result<()> {
         .response()?;
     for s in bound.shortcuts() {
         eprintln!("Wavelane shortcut: {} = {}", s.id(), s.trigger_description());
+        let description = s.trigger_description().trim();
+        if s.id() == SHORTCUT && !description.is_empty() && !description.eq_ignore_ascii_case("none") {
+            if let Ok(mut t) = trigger.lock() {
+                *t = Some(description.to_owned());
+            }
+        }
     }
     while let Some(event) = activated.next().await {
         if event.shortcut_id() == SHORTCUT {
