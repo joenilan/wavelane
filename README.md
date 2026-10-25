@@ -37,6 +37,27 @@ Needs Rust 1.99+, a C compiler and PipeWire development headers
     ./target/release/wavelane          # opens the map (Wavelane stays in the tray)
     ./target/release/wavelane --dump   # what it sees, without the interface
 
+## Rendering and backend
+
+Wavelane uses GPUI Kit 0.8.0 with its default upstream GPUI backend. The map
+stops redrawing when idle, and live metering stops when its window closes,
+including compositor-driven closes. Music keeps the existing animation policy;
+dragging and sliders redraw when input or visible animation changes.
+
+GPUI Kit also supports Fast as a compile-time backend. Wavelane's optional
+Fast backend and comparison tools remain on the
+[`experiment/gpui-fast-0.8.0` branch](https://github.com/joenilan/wavelane/tree/experiment/gpui-fast-0.8.0).
+Fast is not selected in release packages. Each application needs its own
+GPU/power measurements before choosing a backend.
+
+DEV builds are visibly marked and suggest Ctrl+Alt+W with a separate app ID
+and instance lock. Release builds retain Ctrl+Alt+M. Closing the map/flyout
+leaves Wavelane running in the tray; use its tray menu to quit.
+
+To verify native meter teardown without touching desktop audio, run
+`python3 scripts/check_meter_lifecycle.py`. It creates its own PipeWire server
+and null sink and stops only that test server.
+
 ## How it routes
 
 Like a desktop volume control: an application's stream is pointed at an

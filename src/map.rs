@@ -1037,6 +1037,22 @@ impl SoundMap {
         cx.global::<Core>().worker.view().differs(&self.view)
     }
 
+    /// External meter state is not a GPUI entity. Wake only for a visible
+    /// change, including the tail of a glow after playback stops.
+    fn levels_changed(&self, cx: &App) -> bool {
+        if self.light { return false; }
+        let worker = &cx.global::<Core>().worker;
+        self.view.outputs.iter().any(|o| {
+            let old = self.out_levels.get(&o.name).copied().unwrap_or(0.);
+            let peak = worker.level(o.node).unwrap_or(0.).clamp(0., 1.);
+            level_changed(old, peak)
+        }) || self.view.apps.iter().any(|a| {
+            let old = self.app_levels.get(&a.key).copied().unwrap_or(0.);
+            let peak = a.nodes.iter().filter_map(|n| worker.level(*n)).fold(0f32, f32::max).clamp(0., 1.);
+            level_changed(old, peak)
+        })
+    }
+
     fn refresh(&mut self, cx: &App) {
         if self.viewed.elapsed() >= Duration::from_millis(100) {
             self.view = cx.global::<Core>().worker.view();
@@ -1056,7 +1072,7 @@ impl SoundMap {
         }
         // Live levels: fast attack, slow release.
         let worker = &cx.global::<Core>().worker;
-        let smooth = |old: f32, peak: f32| if peak > old { peak } else { old * 0.9 + peak * 0.1 };
+        let smooth = smooth_level;
         for o in &self.view.outputs {
             let peak = worker.level(o.node).unwrap_or(0.).clamp(0., 1.);
             let old = self.out_levels.get(&o.name).copied().unwrap_or(0.);
@@ -1068,6 +1084,16 @@ impl SoundMap {
             self.app_levels.insert(a.key.clone(), smooth(old, peak));
         }
     }
+}
+
+fn smooth_level(old: f32, peak: f32) -> f32 {
+    let level = if peak > old { peak } else { old * 0.9 + peak * 0.1 };
+    if level < 0.002 { 0. } else { level }
+}
+
+fn level_changed(old: f32, peak: f32) -> bool {
+    // Keep scheduling the decay until it snaps to zero, then remain idle.
+    (peak - old).abs() > 0.002 || (old > 0. && peak < 0.002)
 }
 
 /// Cubic bezier point for a cable that leaves `a` horizontally.
@@ -1147,7 +1173,10 @@ fn paint_cables(cables: Vec<Cable>, frame: (f32, f32, f32), phase: f32, window: 
 
 impl Render for SoundMap {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if std::mem::take(&mut cx.global_mut::<Core>().map_close_requested) {
+        // An input-driven frame supersedes a pending idle/animation timer.
+        self.tick.take();
+        if cx.global::<Core>().map_close_requested {
+            cx.global_mut::<Core>().map_close_requested = false;
             self.close(window, cx);
         }
         if self.closing.is_some_and(|at| at.elapsed() >= self.fade()) {
@@ -1239,7 +1268,9 @@ impl Render for SoundMap {
             let hub_ports: Vec<String> =
                 self.hub.as_ref().map_or_else(Vec::new, |h| h.ports.iter().map(|(n, _)| n.clone()).collect());
             for (c, port) in port_positions(hub_ports.len()).iter().enumerate() {
-                let live = count(&Spot::Port(c as u8 + 1)) > 0;
+                let live = self.view.apps.iter().any(|app| {
+                    app.running && spot_of.get(&app.key) == Some(&Spot::Port(c as u8 + 1))
+                });
                 let level = self.out_levels.get(&hub_ports[c]).copied().unwrap_or(0.);
                 cables.push((*port, HUB, colors[c], if live { 0.35 + level * 0.65 } else { 0.08 }, if live { 0.6 + level * 1.6 } else { 0. }));
             }
@@ -1270,16 +1301,16 @@ impl Render for SoundMap {
         // Every frame while something moves. Otherwise 30 per second while
         // cables flow, and a few per second to follow the graph when nothing
         // flows; light drawing redraws only when something changed.
-        let settling = self.shown.iter().any(|(k, p)| slots.get(k).is_some_and(|s| p.dist(*s) > 0.5));
+        let settling = self.shown.iter().any(|(k, p)| !dragged.contains(k) && slots.get(k).is_some_and(|s| p.dist(*s) > 0.5));
         let flowing = !self.light && cables.iter().any(|c| c.3 > 0.1 && c.4 > 0.);
-        if self.drag.is_some() || self.lasso.is_some() || self.closing.is_some() || fade < 1. || settling {
+        if self.closing.is_some() || fade < 1. || settling {
             window.request_animation_frame();
         } else if self.tick.is_none() {
-            let (wait, light) = (Duration::from_millis(if flowing { 33 } else { 200 }), self.light);
+            let wait = Duration::from_millis(if flowing { 33 } else { 200 });
             self.tick = Some(cx.spawn(async move |this, cx| loop {
                 cx.background_executor().timer(wait).await;
                 let Ok(redraw) = this.update(cx, |this, cx| {
-                    let redraw = !light || this.stale(cx);
+                    let redraw = flowing || this.stale(cx) || this.levels_changed(cx);
                     if redraw {
                         this.tick = None;
                         cx.notify();
@@ -1356,7 +1387,7 @@ impl Render for SoundMap {
                         .flex()
                         .flex_col()
                         .gap(d(4.))
-                        .child(div().text_size(d(26.)).font_weight(FontWeight::BOLD).child("Wavelane"))
+                        .child(div().text_size(d(26.)).font_weight(FontWeight::BOLD).child(crate::app::title()))
                         .child(div().text_size(d(13.)).text_color(rgb(MUTED)).child(
                             "Drag an app onto an output, or pick one with the arrow keys and press an output's key (Shift moves everything). Scroll an app or an output for its volume, middle-click an app to mute. Ctrl+Z undoes, Esc closes.",
                         )),
@@ -2131,7 +2162,7 @@ pub(crate) fn toggle(token: Option<String>, cx: &mut App) {
     }
     cx.global_mut::<Core>().map_close_requested = false;
     if let Some(token) = token {
-        gpui_linux::set_pending_activation_token(token);
+        wavelane_linux::set_pending_activation_token(token);
     }
     // Live levels feed the glows; light drawing has none.
     if !cx.global::<Core>().map_light {
@@ -2164,7 +2195,7 @@ pub(crate) fn toggle(token: Option<String>, cx: &mut App) {
         } else {
             WindowBackgroundAppearance::Blurred
         },
-        app_id: Some("digital.zombie.wavelane".into()),
+        app_id: Some(crate::app::app_id().into()),
         focus: true,
         ..Default::default()
     };
@@ -2179,11 +2210,11 @@ pub(crate) fn toggle(token: Option<String>, cx: &mut App) {
                     window_background: WindowBackgroundAppearance::Transparent,
                     window_decorations: Some(WindowDecorations::Client),
                     titlebar: Some(TitlebarOptions {
-                        title: Some("Wavelane".into()),
+                        title: Some(crate::app::title().into()),
                         appears_transparent: true,
                         ..Default::default()
                     }),
-                    app_id: Some("digital.zombie.wavelane".into()),
+                    app_id: Some(crate::app::app_id().into()),
                     ..Default::default()
                 },
                 build,
@@ -2192,6 +2223,9 @@ pub(crate) fn toggle(token: Option<String>, cx: &mut App) {
             .ok()
         }
     };
+    if handle.is_none() {
+        let _ = cx.global::<Core>().worker.send(Command::Metering(false));
+    }
     cx.global_mut::<Core>().map_window = handle.map(|h| h.into());
     cx.activate(true);
 }
@@ -2200,6 +2234,19 @@ pub(crate) fn toggle(token: Option<String>, cx: &mut App) {
 /// key events, so drags are tested through the map's own input path.
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn silence_stops_meter_redraws_after_the_glow_decays() {
+        assert!(!super::level_changed(0., 0.));
+        assert!(!super::level_changed(0., 0.001));
+        assert!(super::level_changed(0., 0.1));
+        let mut level = 1.;
+        for _ in 0..100 {
+            if level > 0. { assert!(super::level_changed(level, 0.)); }
+            level = super::smooth_level(level, 0.);
+        }
+        assert_eq!(level, 0.);
+        assert!(!super::level_changed(level, 0.));
+    }
     #[test]
     fn device_names_keep_the_useful_part() {
         assert_eq!(

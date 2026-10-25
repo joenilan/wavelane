@@ -413,8 +413,8 @@ impl Render for Flyout {
             window.resize(size(px(WIDTH), px(h)));
         }
         let fade = (self.started.elapsed().as_secs_f32() / FADE.as_secs_f32()).min(1.);
-        // Redraw while fading in or dragging a slider.
-        if fade < 1. || self.dragging.is_some() {
+        // Pointer events redraw sliders when they move; a held pointer is idle.
+        if fade < 1. {
             window.request_animation_frame();
         }
         let default = self.view.default_output.clone();
@@ -455,7 +455,7 @@ impl Render for Flyout {
                 .flex()
                 .items_center()
                 .gap(px(8.))
-                .child(div().text_size(px(15.)).font_weight(FontWeight::SEMIBOLD).child("Wavelane"))
+                .child(div().text_size(px(15.)).font_weight(FontWeight::SEMIBOLD).child(crate::app::title()))
                 .child(div().flex_1())
                 .child(
                     div()
@@ -680,7 +680,7 @@ pub(crate) fn toggle(cx: &mut App) {
         }),
         window_bounds: Some(WindowBounds::Windowed(Bounds::new(point(px(0.), px(0.)), size(px(WIDTH), px(h))))),
         window_background: WindowBackgroundAppearance::Transparent,
-        app_id: Some("digital.zombie.wavelane".into()),
+        app_id: Some(crate::app::app_id().into()),
         focus: true,
         ..Default::default()
     };

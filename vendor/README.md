@@ -1,13 +1,13 @@
 # Vendored crates patched for Wavelane
 
-Applied through `[patch.crates-io]` in `app-gpui/Cargo.toml`. Each directory is
+Applied through `[patch.crates-io]` in `Cargo.toml`. Each directory is
 the published crate source with the changes below; licenses are unchanged.
 
 - `ksni` 0.3.6 (Unlicense): implements KDE's
   `org.kde.StatusNotifierItem.ProvideXdgActivationToken` and passes the token
   to the new `Tray::provide_xdg_activation_token` callback.
 - `gpui-pre-linux` 0.3.9 (Apache-2.0; modified), the Linux platform
-  `gpui-kit` 0.7.3 runs on (its crate name is `gpui_linux`): adds
+  `gpui-kit` 0.8.0 runs on (its crate name is `gpui_linux`): adds
   `gpui_linux::set_pending_activation_token`. On Wayland the next new toplevel
   window, or the next `activate` of an existing one, uses that xdg-activation
   token so the compositor raises and focuses the window. Also adds
@@ -27,7 +27,7 @@ stealing prevention otherwise only marks it as wanting attention). Until
 without its `gpui-fast` feature, so it never reached the windows; verified
 now with WAYLAND_DEBUG: a tray click activates with KDE's own token.
 
-- `gpui-component` 0.7.3 (Apache-2.0, Longbridge; modified): the Linux
+- `gpui-component` 0.8.0 (Apache-2.0, Longbridge; modified): the Linux
   client-side window frame (`src/window_border.rs`) rounds all four corners at
   10px instead of drawing a square frame, border and shadow. Wavelane opens its
   window with a transparent root surface and paints its own rounded console,

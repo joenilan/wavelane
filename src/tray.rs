@@ -35,10 +35,16 @@ impl ksni::Tray for Item {
         *self.token.lock().unwrap() = Some(token);
     }
     fn id(&self) -> String {
-        "wavelane".into()
+        if cfg!(feature = "dev-shortcut") { "wavelane-dev" } else { "wavelane" }.into()
     }
     fn title(&self) -> String {
-        if crate::updates::dev_build() { "Wavelane (dev)" } else { "Wavelane" }.into()
+        if cfg!(feature = "dev-shortcut") {
+            crate::app::title()
+        } else if crate::updates::dev_build() {
+            "Wavelane DEV"
+        } else {
+            "Wavelane"
+        }.into()
     }
     fn icon_name(&self) -> String {
         // The drawn symbolic icon, which suits a panel, rather than the
@@ -51,7 +57,7 @@ impl ksni::Tray for Item {
     }
     fn tool_tip(&self) -> ksni::ToolTip {
         ksni::ToolTip {
-            title: "Wavelane".into(),
+            title: self.title(),
             description: "Click to see where every app's sound goes".into(),
             ..Default::default()
         }

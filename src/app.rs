@@ -10,6 +10,19 @@ use std::{
     time::Duration,
 };
 
+/// Development builds are visibly distinct even when copied outside target/.
+pub(crate) fn title() -> &'static str {
+    if cfg!(feature = "dev-shortcut") {
+        "Wavelane DEV Default"
+    } else {
+        "Wavelane"
+    }
+}
+
+pub(crate) fn app_id() -> &'static str {
+    if cfg!(feature = "dev-shortcut") { "digital.zombie.wavelane.dev" } else { "digital.zombie.wavelane" }
+}
+
 /// Control-safe identifier for an application key or output name.
 pub(crate) fn key_id(key: &str) -> String {
     key.bytes().map(|b| format!("{b:02x}")).collect()
@@ -132,6 +145,8 @@ pub fn run(hidden: bool, instance: Option<crate::single_instance::Instance>) {
             let core = cx.global_mut::<Core>();
             if core.map_window.is_some_and(|w| !open.contains(&w)) {
                 core.map_window = None;
+                // Also covers compositor closes, which bypass the fade-out.
+                let _ = core.worker.send(crate::engine::Command::Metering(false));
             }
             if core.flyout_window.is_some_and(|w| !open.contains(&w)) {
                 core.flyout_window = None;

@@ -637,7 +637,8 @@ fn home_dir() -> Option<PathBuf> {
 /// A development build run from the source tree (`target/…`): packages
 /// install `/usr/bin/wavelane`, the tarball `~/.local/bin/wavelane`.
 pub fn dev_build() -> bool {
-    std::env::current_exe().is_ok_and(|exe| exe.components().any(|c| c.as_os_str() == "target"))
+    cfg!(feature = "dev-shortcut")
+        || std::env::current_exe().is_ok_and(|exe| exe.components().any(|c| c.as_os_str() == "target"))
 }
 
 fn detect_kind() -> InstallKind {

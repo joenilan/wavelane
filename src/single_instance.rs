@@ -13,8 +13,14 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(not(feature = "dev-shortcut"))]
 const LOCK: &str = "wavelane.lock";
+#[cfg(feature = "dev-shortcut")]
+const LOCK: &str = "wavelane-dev.lock";
+#[cfg(not(feature = "dev-shortcut"))]
 const SOCKET: &str = "wavelane-instance.sock";
+#[cfg(feature = "dev-shortcut")]
+const SOCKET: &str = "wavelane-dev-instance.sock";
 /// A starting first instance binds its socket right after taking the lock.
 const CONNECT_WAIT: Duration = Duration::from_secs(3);
 

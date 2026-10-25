@@ -60,10 +60,13 @@ pub struct View {
 impl View {
     /// Whether anything a window shows differs, live levels aside.
     pub fn differs(&self, other: &View) -> bool {
-        fn shown(o: &crate::graph::Output) -> (&str, &str, Option<f32>, bool, u64, &str) {
-            (&o.name, &o.description, o.volume, o.mute, o.device, &o.group)
+        fn shown(o: &crate::graph::Output) -> (u32, u64, &str, &str, &str, &str, &str, u64, &str, Option<f32>, bool, &str) {
+            (o.node, o.serial, &o.name, &o.description, &o.nick, &o.icon,
+                &o.form_factor, o.device, &o.device_description, o.volume, o.mute, &o.group)
         }
         self.phase != other.phase
+            || self.error != other.error
+            || self.message != other.message
             || self.apps != other.apps
             || self.default_output != other.default_output
             || !self.outputs.iter().map(shown).eq(other.outputs.iter().map(shown))
@@ -445,6 +448,9 @@ fn run(rx: mpsc::Receiver<Command>, latest: Arc<Mutex<View>>, levels: Arc<Mutex<
                 let result = match (command, engine.as_mut()) {
                     (Command::Metering(on), e) => {
                         metering = on;
+                        if !on {
+                            if let Ok(mut levels) = levels.lock() { levels.clear(); }
+                        }
                         if let Some(e) = e {
                             e.graph.set_metering(on);
                         }
@@ -552,6 +558,25 @@ mod tests {
         assert_eq!(apps[0].pinned.as_deref(), Some("spk"));
         assert_eq!(apps[1].playing_on, None);
         assert_eq!(apps[1].streams, 2);
+    }
+
+    #[test]
+    fn view_changes_include_errors_and_device_identity_but_not_live_levels() {
+        let original = View { outputs: vec![Output::default()], ..Default::default() };
+        let mut changed = original.clone();
+        changed.outputs[0].level = Some(0.5);
+        assert!(!original.differs(&changed));
+        changed.outputs[0].device_description = "New mixer".into();
+        assert!(original.differs(&changed));
+        changed = original.clone();
+        changed.outputs[0].node = 123;
+        assert!(original.differs(&changed));
+        changed = original.clone();
+        changed.message = Some("Routing failed".into());
+        assert!(original.differs(&changed));
+        changed = original.clone();
+        changed.error = Some("Disconnected".into());
+        assert!(original.differs(&changed));
     }
 
     /// Live routing on this machine's PipeWire with silent test streams

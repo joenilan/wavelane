@@ -1,4 +1,5 @@
-//! Wavelane: drag each application's sound onto any output.
+extern crate gpui_linux as wavelane_linux;
+// Wavelane: drag each application's sound onto any output.
 mod app;
 mod app_icons;
 mod engine;
@@ -13,7 +14,7 @@ mod updates;
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|a| a == "--version") {
-        println!("Wavelane {}", env!("CARGO_PKG_VERSION"));
+        println!("{} {}", app::title(), env!("CARGO_PKG_VERSION"));
         return;
     }
     if args.iter().any(|a| a == "--help") {
@@ -29,6 +30,10 @@ fn main() {
     if args.first().map(String::as_str) == Some("--dump") {
         dump();
         return;
+    }
+    if args.iter().any(|a| a == "--benchmark") {
+        eprintln!("This build does not include the isolated benchmark harness.");
+        std::process::exit(2);
     }
     let hidden = args.iter().any(|a| a == "--hidden");
     let map = args.iter().any(|a| a == "--map");

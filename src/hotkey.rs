@@ -53,7 +53,7 @@ async fn listen(pressed: Arc<AtomicBool>, trigger: Arc<Mutex<Option<String>>>) -
     // A connection of its own: the portal ties the app ID to the connection
     // that registers it, before any other portal call on it.
     let connection = ashpd::zbus::Connection::session().await?;
-    if let Ok(app) = ashpd::AppID::try_from("digital.zombie.wavelane") {
+    if let Ok(app) = ashpd::AppID::try_from(crate::app::app_id()) {
         if let Err(error) = ashpd::register_host_app_with_connection(connection.clone(), app).await {
             eprintln!("Wavelane shortcut: app registration: {error}");
         }
@@ -61,7 +61,7 @@ async fn listen(pressed: Arc<AtomicBool>, trigger: Arc<Mutex<Option<String>>>) -
     let portal = GlobalShortcuts::with_connection(connection).await?;
     let session = portal.create_session(Default::default()).await?;
     let mut activated = portal.receive_activated().await?;
-    let shortcut = NewShortcut::new(SHORTCUT, "Open or close Wavelane").preferred_trigger(PREFERRED);
+    let shortcut = NewShortcut::new(SHORTCUT, crate::app::title()).preferred_trigger(PREFERRED);
     let bound = portal
         .bind_shortcuts(&session, &[shortcut], None, Default::default())
         .await?
