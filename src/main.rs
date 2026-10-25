@@ -1,4 +1,11 @@
+#[cfg(feature = "gpui-fast")]
+extern crate gpui_kit as gpui;
+#[cfg(feature = "gpui-fast")]
+extern crate wavelane_fast_linux as wavelane_linux;
+#[cfg(not(feature = "gpui-fast"))]
 extern crate gpui_linux as wavelane_linux;
+#[cfg(feature = "perf-harness")]
+mod benchmark;
 // Wavelane: drag each application's sound onto any output.
 mod app;
 mod app_icons;
@@ -31,9 +38,15 @@ fn main() {
         dump();
         return;
     }
+    #[cfg(not(feature = "perf-harness"))]
     if args.iter().any(|a| a == "--benchmark") {
         eprintln!("This build does not include the isolated benchmark harness.");
         std::process::exit(2);
+    }
+    #[cfg(feature = "perf-harness")]
+    if benchmark::requested() {
+        app::run(true, None);
+        return;
     }
     let hidden = args.iter().any(|a| a == "--hidden");
     let map = args.iter().any(|a| a == "--map");

@@ -13,7 +13,7 @@ use std::{
 /// Development builds are visibly distinct even when copied outside target/.
 pub(crate) fn title() -> &'static str {
     if cfg!(feature = "dev-shortcut") {
-        "Wavelane DEV Default"
+        if cfg!(feature = "gpui-fast") { "Wavelane DEV Fast" } else { "Wavelane DEV Default" }
     } else {
         "Wavelane"
     }
@@ -153,6 +153,10 @@ pub fn run(hidden: bool, instance: Option<crate::single_instance::Instance>) {
             }
         })
         .detach();
+        #[cfg(feature = "perf-harness")]
+        if crate::benchmark::requested() {
+            crate::benchmark::start(cx);
+        }
         if !hidden {
             crate::map::toggle(None, cx);
         }

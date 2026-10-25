@@ -19,6 +19,7 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 # The Linux platform gpui-kit runs on; the direct dependency reaches the
 # vendored patch API (crate name gpui_linux): window raise, blur.
 gpui-pre-linux = "=0.3.9"
+wavelane-fast-linux = { package = "gpui-fast-linux", version = "=0.1.10", optional = true }
 # System-wide shortcut (Global Shortcuts portal).
 ashpd = { version = "=0.13.13", default-features = false, features = ["global_shortcuts", "async-io"] }
 tokio = { version = "1", features = ["rt", "net", "time"] }
@@ -31,6 +32,10 @@ resvg = { version = "=0.45.1", default-features = false }
 # Development builds suggest Ctrl+Alt+W for the map, leaving Ctrl+Alt+M to
 # LinX on the same desktop. Releases suggest Ctrl+Alt+M.
 dev-shortcut = []
+# Isolated synthetic scenes and frame profiling; never touches PipeWire.
+perf-harness = ["dev-shortcut", "gpui-kit/profiler"]
+# Experimental only; the default remains gpui-pre.
+gpui-fast = ["gpui-kit/gpui-fast", "dep:wavelane-fast-linux"]
 
 [workspace]
 
@@ -42,3 +47,5 @@ debug = 1
 ksni = { path = "vendor/ksni" }
 gpui-pre-linux = { path = "vendor/gpui-pre-linux" }
 gpui-component = { path = "vendor/gpui-component" }
+
+gpui-fast-linux = { path = "vendor/gpui-fast-linux" }

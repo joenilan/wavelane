@@ -303,6 +303,16 @@ impl SoundMap {
         }
     }
 
+    #[cfg(feature = "perf-harness")]
+    pub(crate) fn benchmark_position(&self) -> Point<Pixels> {
+        let p = self.shown.get("Test app 00").copied().unwrap_or(P(200., 200.));
+        point(px(self.frame.1 + p.0 * self.frame.0), px(self.frame.2 + p.1 * self.frame.0))
+    }
+    #[cfg(feature = "perf-harness")]
+    pub(crate) fn benchmark_target(&self) -> Point<Pixels> {
+        let p = P(610., 610.);
+        point(px(self.frame.1 + p.0 * self.frame.0), px(self.frame.2 + p.1 * self.frame.0))
+    }
     fn port_colors(&self) -> Vec<u32> {
         let n = self.hub.as_ref().map_or(0, |h| h.ports.len());
         (0..n).map(|i| PORT_COLORS[i % PORT_COLORS.len()]).collect()
@@ -1173,6 +1183,8 @@ fn paint_cables(cables: Vec<Cable>, frame: (f32, f32, f32), phase: f32, window: 
 
 impl Render for SoundMap {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        #[cfg(feature = "perf-harness")]
+        crate::benchmark::RENDERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         // An input-driven frame supersedes a pending idle/animation timer.
         self.tick.take();
         if cx.global::<Core>().map_close_requested {

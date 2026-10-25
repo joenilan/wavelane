@@ -27,6 +27,10 @@ impl Hotkey {
     pub(crate) fn spawn() -> Self {
         let pressed = Arc::new(AtomicBool::new(false));
         let trigger = Arc::new(Mutex::new(None));
+        #[cfg(feature = "perf-harness")]
+        if crate::benchmark::requested() {
+            return Self { pressed, trigger };
+        }
         let (flag, bound) = (pressed.clone(), trigger.clone());
         let _ = std::thread::Builder::new().name("wavelane-hotkey".into()).spawn(move || {
             let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {

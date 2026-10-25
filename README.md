@@ -37,26 +37,75 @@ Needs Rust 1.99+, a C compiler and PipeWire development headers
     ./target/release/wavelane          # opens the map (Wavelane stays in the tray)
     ./target/release/wavelane --dump   # what it sees, without the interface
 
-## Rendering and backend
+## Two DEV builds
 
-Wavelane uses GPUI Kit 0.8.0 with its default upstream GPUI backend. The map
-stops redrawing when idle, and live metering stops when its window closes,
-including compositor-driven closes. Music keeps the existing animation policy;
-dragging and sliders redraw when input or visible animation changes.
+Run `python3 scripts/build_dev_backends.py` to build separately named optimized
+**Wavelane DEV Default** and **Wavelane DEV Fast** executables in
+`target/dev-review/`, with a hash/feature manifest in `backend-builds.json`.
+They suggest Ctrl+Alt+W and identify the backend in their window/tray titles
+and `--version`. Nothing is installed or launched. Quit the current DEV app
+from its tray menu before switching executables; closing its windows leaves
+it running, and a second launch would forward to that existing DEV instance.
 
-GPUI Kit also supports Fast as a compile-time backend. Wavelane's optional
-Fast backend and comparison tools remain on the
-[`experiment/gpui-fast-0.8.0` branch](https://github.com/joenilan/wavelane/tree/experiment/gpui-fast-0.8.0).
-Fast is not selected in release packages. Each application needs its own
-GPU/power measurements before choosing a backend.
+Agents testing other GPUI apps should read
+[the shared backend handoff](docs/GPUI_BACKEND_HANDOFF.md). It covers Kit 0.8.0's
+built-in engine selection, paired builds, custom platform patches, and the
+limits of Wavelane's measurements. Each app needs its own benchmark decision.
 
-DEV builds are visibly marked and suggest Ctrl+Alt+W with a separate app ID
-and instance lock. Release builds retain Ctrl+Alt+M. Closing the map/flyout
-leaves Wavelane running in the tray; use its tray menu to quit.
+## Private backend measurements
 
-To verify native meter teardown without touching desktop audio, run
-`python3 scripts/check_meter_lifecycle.py`. It creates its own PipeWire server
-and null sink and stops only that test server.
+GPUI Kit is pinned to **0.8.0**. The default backend remains `gpui-pre` 0.3.9.
+`--features gpui-fast` selects the experimental Fast 0.1.10 backend and its
+vendored Wayland activation/blur patches; it does not change release defaults.
+The upstream [Kit feature setup](https://github.com/longbridge/gpui-kit#gpui-fast)
+and [Fast rendering notes](https://github.com/longbridge/gpui-fast/blob/main/docs/retained-mode.md)
+describe CPU work saved, which does not establish GPU or power savings.
+
+The optional `perf-harness` feature supplies fixed synthetic scenes (six
+outputs, sixteen apps). It never opens PipeWire, registers global shortcuts,
+checks for updates, or loads/saves audio placements. A regular build rejects
+`--benchmark`. To compare equivalent release builds, copy each executable
+before building the next backend:
+
+```sh
+cargo build --release --locked --features perf-harness
+cp target/release/wavelane local/wavelane-DEV-default
+cargo build --release --locked --features perf-harness,gpui-fast
+cp target/release/wavelane local/wavelane-DEV-fast
+python3 scripts/private_benchmark_session.py python3 scripts/benchmark_backends.py default="$PWD/local/wavelane-DEV-default" fast="$PWD/local/wavelane-DEV-fast"
+```
+
+Requires KWin, `dbus-run-session`, Python 3 and `nvidia-smi` for this runner.
+It uses a private 1280×800 Wayland compositor, config, cache and bus, with
+identical effects and scheduling for both backends. It measures tray only,
+idle flyout, idle map, simulated music metering, pointer-driven dragging and
+volume scrolling, plus a forced compositor close. Each scene warms up for five
+seconds; build order reverses on the second pass. Output is under
+`local/gpui-evaluation/measurements/`: raw logs, CPU/RSS/device GPU samples and
+per-run JSON including executable hashes. Duplicate build hashes are rejected.
+When comparing separate source snapshots, use separate Cargo target directories;
+sharing a package target can reuse another snapshot's executable.
+
+CPU percentages use one logical core as 100%. GPUI profiling measures CPU draw
+work and, when available, animation presentation intervals, not GPU execution
+time. Missing GPU process samples mean unknown/below measurement resolution.
+`nvidia-smi` watts/utilization describe the **whole GPU**, including the owner's
+other apps and both compositors. Per-process `pmon` samples are filtered past
+warm-up and have coarse resolution; graphics process watts are unavailable.
+[NVIDIA documents](https://docs.nvidia.com/deploy/nvidia-smi/index.html#process-monitoring)
+missing readings as unavailable metrics or errors, so they are never counted
+as zero.
+These synthetic scenes isolate backend drawing costs, not real audio capture
+cost, laptop battery life, or desktop tray/shortcut behavior. Do not infer GPU
+savings from the CPU measurements. Native meter teardown can be checked safely
+with `python3 scripts/check_meter_lifecycle.py`, which starts its own PipeWire
+server and null output and stops only that server.
+
+An optimized hands-on DEV copy uses `cargo build --release --features
+dev-shortcut`; its visible title is **Wavelane DEV**, its suggested shortcut is
+**Ctrl+Alt+W**, and its app ID/instance lock are separate from release builds.
+Releases still suggest **Ctrl+Alt+M**. Nothing in these scripts installs,
+publishes, or replaces the installed app.
 
 ## How it routes
 

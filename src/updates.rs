@@ -276,6 +276,8 @@ impl Updates {
     /// Call about once a second: runs scheduled checks and collects worker
     /// results. Returns true when the view changed.
     pub fn poll(&mut self) -> bool {
+        #[cfg(feature = "perf-harness")]
+        if crate::benchmark::requested() { return false; }
         let checked = self.poll_check();
         let downloaded = self.poll_download();
         let installed = self.poll_install();

@@ -390,6 +390,10 @@ pub struct Worker {
 }
 impl Worker {
     pub fn spawn() -> Self {
+        #[cfg(feature = "perf-harness")]
+        if crate::benchmark::requested() {
+            return Self::fixture();
+        }
         let (tx, rx) = mpsc::sync_channel::<Command>(64);
         let latest = Arc::new(Mutex::new(View::default()));
         let levels = Arc::new(Mutex::new(HashMap::new()));
@@ -400,6 +404,33 @@ impl Worker {
             .spawn(move || run(rx, view, lv, ending))
             .ok();
         Self { tx, latest, levels, stop, thread }
+    }
+    #[cfg(feature = "perf-harness")]
+    fn fixture() -> Self {
+        let (tx, rx) = mpsc::sync_channel(64);
+        let latest = Arc::new(Mutex::new(crate::benchmark::fixture()));
+        let levels = Arc::new(Mutex::new(HashMap::new()));
+        let stop = Arc::new(AtomicBool::new(false));
+        let (view, lv, ending) = (latest.clone(), levels.clone(), stop.clone());
+        let thread = thread::spawn(move || {
+            let started = Instant::now();
+            while !ending.load(Ordering::Acquire) {
+                if let Ok(command) = rx.recv_timeout(LEVEL_TICK) {
+                    crate::benchmark::apply(&mut view.lock().unwrap(), command);
+                }
+                let mut levels = lv.lock().unwrap();
+                levels.clear();
+                if crate::benchmark::METERING.load(Ordering::Relaxed) {
+                    for node in 100..216 {
+                        let peak = if view.lock().unwrap().apps.iter().any(|a| a.running) {
+                            (started.elapsed().as_secs_f32() * 4. + node as f32).sin().abs() * 0.65
+                        } else { 0. };
+                        levels.insert(node, peak);
+                    }
+                }
+            }
+        });
+        Self { tx, latest, levels, stop, thread: Some(thread) }
     }
     pub fn view(&self) -> View {
         self.latest.lock().map(|v| v.clone()).unwrap_or_default()

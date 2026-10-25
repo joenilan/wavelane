@@ -403,6 +403,8 @@ impl Flyout {
 
 impl Render for Flyout {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        #[cfg(feature = "perf-harness")]
+        crate::benchmark::RENDERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if self.viewed.elapsed() >= Duration::from_millis(150) {
             self.view = cx.global::<Core>().worker.view();
             self.viewed = Instant::now();

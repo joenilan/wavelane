@@ -32,3 +32,13 @@ now with WAYLAND_DEBUG: a tray click activates with KDE's own token.
   10px instead of drawing a square frame, border and shadow. Wavelane opens its
   window with a transparent root surface and paints its own rounded console,
   so the desktop shows through the corners as on Windows.
+
+- `gpui-fast-linux` 0.1.10 (Apache-2.0; modified), enabled only by Wavelane's
+  experimental `gpui-fast` feature. The same activation-token, launch-token and
+  standard background-effect patches described above are applied to Fast's
+  platform too. The application aliases its direct platform dependency so
+  patch API calls always reach the backend actually opening its windows.
+  Fast's native composition code remains intact. GPUI Kit's `gpui-fast` feature
+  selects a consistent Fast core across Kit, Base, Component and assets;
+  upstream `gpui-pre` dependencies still compile because Cargo features are
+  additive. The lockfile pins the tested Fast packages at 0.1.10.
